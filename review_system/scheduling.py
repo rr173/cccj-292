@@ -669,6 +669,15 @@ def _finalize_group(conn: sqlite3.Connection, group_id: int, now: str) -> None:
         (GROUP_CONFIRMED, "all_accepted", now, group_id),
     )
 
+    # Audience lists follow the rescheduled talks inside this same
+    # transaction: registrations key on the talk (manuscript + decision era)
+    # and seats are re-checked against the new times/rooms/capacities, so no
+    # partially-rescheduled intermediate list is ever visible.  Imported late
+    # to keep the module dependency one-directional.
+    from . import audience
+
+    audience.on_sessions_finalized(conn, now)
+
 
 # ---------------------------------------------------------------------------
 # Conflict-withdrawal hook (called inside register_conflict's transaction)

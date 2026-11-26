@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 from . import config, db as database
 from .errors import ApiError
+from .routers import audience as audience_router
 from .routers import authors, editors, reviewers
 
 
@@ -68,6 +69,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
     app.include_router(authors.router)
     app.include_router(reviewers.router)
     app.include_router(editors.router)
+    app.include_router(audience_router.router)
 
     @app.get("/health", tags=["meta"])
     def health():

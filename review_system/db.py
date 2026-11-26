@@ -257,6 +257,54 @@ CREATE TABLE IF NOT EXISTS payment_results (
     note                TEXT,
     created_at          TEXT NOT NULL
 );
+
+-- -------------------------------------------------------------------------
+-- Audience seat reservations
+--
+-- Editors give each configured room an audience capacity (default zero);
+-- every talk uses the capacity of the room its confirmed session is in.
+-- A registration attaches to the *talk* (manuscript + the decision era it
+-- was registered under), so a confirmed reschedule that reuses the original
+-- decision carries the audience list over automatically, while a withdrawn
+-- decision terminates the registrations of not-yet-started talks without
+-- transferring them to any new decision.  Status lifecycle:
+-- waitlisted/seated (active) -> cancelled (by the audience member) or
+-- ended (decision withdrawn).  Once a talk starts, its admission list is
+-- frozen and never rewritten.
+-- -------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS room_audience_capacities (
+    room_code   TEXT PRIMARY KEY,        -- canonical config room code
+    capacity    INTEGER NOT NULL CHECK (capacity >= 0),
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audience_registrations (
+    id              INTEGER PRIMARY KEY,
+    manuscript_id   INTEGER NOT NULL REFERENCES manuscripts(id),
+    -- The decision era of the talk at registration time; registrations never
+    -- migrate across decisions.
+    decision_id     INTEGER NOT NULL REFERENCES decisions(id),
+    audience_id     INTEGER NOT NULL REFERENCES users(id),
+    status          TEXT NOT NULL CHECK (status IN
+                        ('waitlisted', 'seated', 'cancelled', 'ended')),
+    registered_at   TEXT NOT NULL,       -- queue order of this application
+    seated_at       TEXT,
+    cancelled_at    TEXT,
+    ended_at        TEXT,
+    end_reason      TEXT,
+    created_at      TEXT NOT NULL
+);
+
+-- At most one active application per audience member per talk (decision era).
+-- id order is the global registration order used for all queue decisions.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_active_registration
+    ON audience_registrations (decision_id, audience_id)
+    WHERE status IN ('waitlisted', 'seated');
+CREATE INDEX IF NOT EXISTS ix_registrations_manuscript
+    ON audience_registrations (manuscript_id);
+CREATE INDEX IF NOT EXISTS ix_registrations_audience
+    ON audience_registrations (audience_id);
 """
 
 # Locally prepared accounts. Keys are static so the role examples are

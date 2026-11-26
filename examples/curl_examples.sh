@@ -166,3 +166,38 @@ curl -sS "$BASE/editor/reimbursements/allowances/1" -H "$EDITOR"
 # --- Author: only their own reimbursement progress ---
 curl -sS "$BASE/author/reimbursements" -H "$AUTHOR1"
 curl -sS "$BASE/author/reimbursements/allowances/1" -H "$AUTHOR1"
+
+# ===========================================================================
+# Audience seat reservations
+# Every prepared account may register as audience.  A talk uses the audience
+# capacity of the room its confirmed session is in (default zero).
+# ===========================================================================
+
+# --- Editor: set a room's audience capacity (re-evaluates every affected
+#     talk in the same transaction; the response lists promoted/demoted
+#     registration ids) ---
+curl -sS -X PUT "$BASE/editor/rooms/hall-a/audience-capacity" \
+  -H "$EDITOR" -H 'Content-Type: application/json' -d '{"capacity": 2}'
+
+# --- Audience: confirmed talks with seat availability and my own status
+#     (counts only — never other people's registrations) ---
+curl -sS "$BASE/audience/talks" -H "$REV1"
+
+# --- Audience: register for a talk.  Seats confirm in registration order;
+#     overlapping talks may be waitlisted, but one person never holds two
+#     seats whose slots overlap.  Re-registering while active is a no-op. ---
+curl -sS -X POST "$BASE/audience/talks/1/register" -H "$REV1"
+curl -sS -X POST "$BASE/audience/talks/1/register" -H "$REV2"
+
+# --- Audience: my own seats / waitlist positions / history ---
+curl -sS "$BASE/audience/registrations" -H "$REV1"
+
+# --- Audience: cancel my registration (freed seats promote the earliest
+#     eligible waitlisted applicant, here and in other affected talks) ---
+curl -sS -X POST "$BASE/audience/talks/1/cancel" -H "$REV1"
+
+# --- Editor: the talk's current admission list (seated + waitlist, in
+#     order).  Confirmed reschedules carry it over automatically; a started
+#     talk's list is frozen and stays readable even after a withdrawal. ---
+curl -sS "$BASE/editor/talks/1/admissions" -H "$EDITOR"
+curl -sS "$BASE/editor/sessions/1/admissions" -H "$EDITOR"

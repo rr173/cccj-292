@@ -176,6 +176,21 @@ class ScheduleResponseInput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Audience seat reservations
+# ---------------------------------------------------------------------------
+
+class AudienceCapacitySet(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    capacity: StrictInt = Field(
+        ge=0,
+        validation_alias=AliasChoices(
+            "capacity", "audience_capacity", "seats", "audience_seats"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Speaker travel reimbursement — every monetary field is integer cents.
 # ---------------------------------------------------------------------------
 

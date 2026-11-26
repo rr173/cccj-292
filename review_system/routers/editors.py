@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from .. import config, reimbursement, scheduling, services
+from .. import audience, config, reimbursement, scheduling, services
 from ..schemas import (
     AllowanceCreate,
+    AudienceCapacitySet,
     BatchCreate,
     BatchResultsInput,
     ClaimCreate,
@@ -82,7 +83,42 @@ def get_decision(decision_id: int, _=Depends(require_role("editor"))):
 
 @router.get("/rooms")
 def list_rooms(_=Depends(require_role("editor"))):
-    return config.public_rooms()
+    capacities = audience.room_capacities(config.DB_PATH)
+    return [
+        {**room, "audience_capacity": capacities.get(room["code"], 0)}
+        for room in config.public_rooms()
+    ]
+
+
+@router.put("/rooms/{room_ref}/audience-capacity")
+def set_room_audience_capacity(
+    room_ref: str, body: AudienceCapacitySet, _=Depends(require_role("editor"))
+):
+    """Set a room's audience capacity (default zero) and re-evaluate lists."""
+    return audience.set_room_capacity(config.DB_PATH, room_ref, body.capacity)
+
+
+@router.post("/rooms/{room_ref}/audience-capacity", include_in_schema=False)
+def set_room_audience_capacity_post_alias(
+    room_ref: str, body: AudienceCapacitySet, _=Depends(require_role("editor"))
+):
+    return audience.set_room_capacity(config.DB_PATH, room_ref, body.capacity)
+
+
+# ---------------------------------------------------------------------------
+# Audience admission lists (editor-only)
+# ---------------------------------------------------------------------------
+
+@router.get("/talks/{manuscript_id}/admissions")
+def talk_admissions(manuscript_id: int, _=Depends(require_role("editor"))):
+    """Current admission list (seated + waitlist) for a talk."""
+    return audience.editor_admissions_for_manuscript(config.DB_PATH, manuscript_id)
+
+
+@router.get("/sessions/{session_id}/admissions")
+def session_admissions(session_id: int, _=Depends(require_role("editor"))):
+    """Admission list of the decision era the given session belongs to."""
+    return audience.editor_admissions_for_session(config.DB_PATH, session_id)
 
 
 # ---------------------------------------------------------------------------

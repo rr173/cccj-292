@@ -63,6 +63,17 @@ PYTHONPATH=/workspace/.pylibs/lib/python3.11/site-packages:/workspace \
 - 撤回决议仅释放未交部分，已交付仍可核销、未明额继续占款、已付仍计支出；
 - 审批 / 交付 / 撤回 / 核销并发下不超限、不留错分类（`test_concurrent_*`）。
 
+听众席位预约（`tests/test_audience.py`）：
+
+- 会场听众容量默认零、设置后按报名先后递补；重复报名不改顺序、取消再报排到最后；
+- 重叠报告可候补但不可同时持席位（首尾相接不算重叠），空位递补可跳过撞期者，
+  同一听众在多场的递补机会也按报名先后裁决；
+- 已确认席位不被后来合格的更早候补挤掉；确认改期（含同组多变更、换会场）与
+  容量变动后按原报名先后保留名单，其余转回候补且保留原顺序；
+- 撤回决议终止未开场报告的报名且不随新决议转移；开场后名单冻结，不再接受/
+  取消/递补，容量与决议变化不改写，冻结席位仍按原时段参与撞期判断；
+- 并发报名不超容量、取消+报名/容量变更/决议撤回竞争下名单一致（`test_concurrent_*`）。
+
 ## 3. 角色调用样例
 
 - `examples/walkthrough.py`：httpx 编写的完整端到端脚本（投稿 → 邀请 → 评审 →
@@ -85,6 +96,14 @@ PYTHONPATH=/workspace/.pylibs/lib/python3.11/site-packages:/workspace \
   REVIEW_DB_PATH=/tmp/reimb-demo.db ./run.sh --port 8011
   PYTHONPATH=/workspace/.pylibs/lib/python3.11/site-packages \
     python3 examples/reimbursement_walkthrough.py http://127.0.0.1:8011
+  ```
+- `examples/audience_walkthrough.py`：听众席位端到端脚本（设容量 → 报名/候补 →
+  重叠撞期跳过 → 取消递补 → 确认改期保留名单并联动递补 → 容量收缩降级 →
+  编辑查询入场名单）。
+  ```bash
+  REVIEW_DB_PATH=/tmp/audience-demo.db ./run.sh --port 8012
+  PYTHONPATH=/workspace/.pylibs/lib/python3.11/site-packages \
+    python3 examples/audience_walkthrough.py http://127.0.0.1:8012
   ```
 
 ## 4. HTTP 接口一览
@@ -127,7 +146,10 @@ PYTHONPATH=/workspace/.pylibs/lib/python3.11/site-packages:/workspace \
 | GET/POST | `/editor/conflicts` | 查看/登记利益冲突 |
 | POST | `/editor/decisions` | 选修订 + 至少 2 份该修订的当前无冲突评审 + 结论 |
 | GET  | `/editor/decisions`、`/editor/decisions/{id}` | 含撤回版本的原始冻结内容与撤回原因 |
-| GET  | `/editor/rooms` | 本地配置的会场清单（来自 `review_system/rooms.json`，可用 `REVIEW_ROOMS_CONFIG` 覆盖） |
+| GET  | `/editor/rooms` | 本地配置的会场清单（来自 `review_system/rooms.json`，可用 `REVIEW_ROOMS_CONFIG` 覆盖），含各会场听众容量 |
+| PUT  | `/editor/rooms/{room}/audience-capacity` | 设置会场听众容量（默认 0，id/code/名称/别名均可寻址）；同事务内重算受影响名单 |
+| GET  | `/editor/talks/{manuscript_id}/admissions` | 该报告的当前入场名单（席位 + 候补，按报名先后；已开场则冻结名单） |
+| GET  | `/editor/sessions/{session_id}/admissions` | 按场次查其决议代的入场名单 |
 | POST | `/editor/schedule/groups` | 提交一组安排（每份稿件一次）：指定未撤回的已发布决议/会场/UTC 起止 + 整组确认截止 |
 | GET  | `/editor/schedule` | 已确认日程；`?history=true` 另含被替换/作废场次及结束原因 |
 | GET  | `/editor/schedule/occupancy` | 当前占用：已确认场次 + 待确认组预留的新时段 |
@@ -165,6 +187,20 @@ PYTHONPATH=/workspace/.pylibs/lib/python3.11/site-packages:/workspace \
 组状态：`pending / confirmed / declined / expired / cancelled`；结束原因：
 `all_accepted / author_declined / deadline_expired / decision_withdrawn`。
 场次状态：`confirmed / superseded / voided`。
+
+### 听众 `/audience`
+
+所有预置账号（作者、评审人、编辑）都可作为听众；接口只返回本人状态与
+各场计数，**绝不暴露其他听众的报名名单或任何评审资料**。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET  | `/audience/talks` | 已确认报告列表：会场/时间、听众容量、已占席位、剩余席位、候补数、是否开放报名、我的报名状态 |
+| POST | `/audience/talks/{manuscript_id}/register` | 报名（201）；已持有效申请时原样返回（200，顺序不变）；开场后 409 `session_started`，未开放 409 `not_open` |
+| POST | `/audience/talks/{manuscript_id}/cancel` | 取消自己的有效报名（无有效报名 404；开场后 409） |
+| GET  | `/audience/registrations` | 自己的全部报名：席位/候补（含候补位次）/已取消/已终止及原因 |
+
+（另提供别名：`POST /audience/talks/{id}/registration`、`DELETE /audience/talks/{id}/registration`。）
 
 ### 报告人差旅报销 `/editor/reimbursements`、`/author/reimbursements`
 
@@ -260,6 +296,28 @@ POST /editor/reimbursements/batches/1/results
 | 已付仍计支出、已交付可核销 | 撤回只改 `reimbursement_allowances`，从不改 `payment_instructions/results` |
 | 并发安全 | 复用全局写锁 + `BEGIN IMMEDIATE`；`test_concurrent_*` 验证不超限、无错分类 |
 
+### 听众席位关键规则与实现位置
+
+| 需求 | 实现 |
+|---|---|
+| 预置账号即听众 | `/audience` 路由只要求登录（`current_user`），不限角色 |
+| 会场听众容量默认零、每场报告用所在会场容量 | `room_audience_capacities` 表按规范会场 code 存容量，缺省 0；评估时按场次当前会场解析 |
+| 只有已确认且决议有效的报告开放报名 | `audience.register` 校验 confirmed 场次 + `decisions.status='published'` + 未开场 |
+| 待确认的排期变更不影响报名 | 只有 `_finalize_group` 触发重算；pending 组从不触碰报名 |
+| 同一报告至多一份有效申请；重复报名不改顺序 | 部分唯一索引 `ux_active_registration(decision_id, audience_id)`；命中已有申请直接原样返回 |
+| 取消后再报名排在后面 | 取消置 `cancelled`，重新报名插入新行，获得更大的 id（即更晚的队列位置） |
+| 重叠可候补、不可同时持席位；首尾相接不算重叠 | 半开区间重叠判定；`_promote_pass` 跳过与本人已持席位撞期的候补 |
+| 已确认席位不被后来合格的候补挤掉 | 递补只填空位，从不降级；降级只发生在改期/容量变动后的 `_reevaluate` |
+| 改期/容量变动后按原报名先后保留、其余转回候补且保留原顺序 | `_reevaluate` 以报名 id 顺序贪心保留（容量内且不撞期），其余置回 `waitlisted` 且不改 `registered_at`/id |
+| 空位按报名先后递补、可跳过撞期者、多场同时递补同序 | `_promote_pass` 全局按报名 id 升序单趟扫描，确认能入座者 |
+| 取消/报告取消/改期释放的机会算到其他受影响报告 | 每个变更入口都在同事务末尾跑全局 `_promote_pass` |
+| 沿用原决议的确认改期保留报名 | 报名挂在（稿件， 决议代）上；改期只换场次行，报名自动跟随新场次 |
+| 撤回决议终止未开场报告的报名、不随新决议转移 | `audience.decisions_withdrawn_hook` 在冲突事务内终止（`ended/decision_withdrawn`）；新决议产生新决议代，旧报名永不复活 |
+| 开场即冻结名单 | `starts_at <= now` 的场次：报名/取消/递补/降级全部拒绝或跳过；冻结后容量与决议变化不改写 |
+| 已开场席位仍按原时段参与撞期判断 | `_build_held_state` 把已开场场次的席位计入持位区间（即使之后被 void） |
+| 名单与排期原子一致、无中间态 | 所有写路径复用全局写锁 + `BEGIN IMMEDIATE`；改期生效与决议撤回在同一事务内完成报名重算 |
+| 不对其他听众公开名单/评审资料 | `/audience` 只返回计数与本人状态；入场名单仅 `/editor` 可见 |
+
 ### 并发不变量（`tests/test_publish_conflict_race.py`）
 
 冲突登记与决议发布并发时，只允许两种结局：
@@ -292,6 +350,10 @@ reimbursement_claims(allowance_id, receipt_id, amount_cents)
 payment_batches(idempotency_key UNIQUE, request_hash)
 payment_instructions(batch_id, claim_id, allowance_id, amount_cents, payee_id, voucher_no, payment_no UNIQUE)
 payment_results(instruction_id UNIQUE, paid_cents, released_cents, note)
+room_audience_capacities(room_code PRIMARY KEY, capacity >= 0)   -- 缺省即 0
+audience_registrations(manuscript_id, decision_id, audience_id, status, registered_at, seated_at, ...)
+-- ux_active_registration: UNIQUE(decision_id, audience_id) WHERE status IN ('waitlisted','seated')
+-- 报名 id 即全局报名先后顺序；状态：waitlisted/seated/cancelled/ended
 ```
 
 会场不入库、不提供管理接口，只读本地配置 `review_system/rooms.json`
@@ -304,3 +366,4 @@ payment_results(instruction_id UNIQUE, paid_cents, released_cents, note)
 评语正文里评审人自行写入的身份信息不做识别脱敏（仅编号层面匿名）。
 报销不接银行、不调用任何付款服务，也不接收/存储票据图片；只按凭证号登记票面额，
 并把付款所需信息（收款作者、凭证号、金额、付款编号）交给会务财务。
+听众席位不做签到、收费或通知；开场名单冻结后不再变化。

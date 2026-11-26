@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from . import audience
 from . import db as database
 from . import reimbursement
 from . import scheduling
@@ -531,6 +532,12 @@ def register_conflict(
             conn, withdrawn, now
         )
 
+        # Audience: terminate registrations of not-yet-started talks backed
+        # by the withdrawn decisions (they never transfer to a new decision);
+        # started talks keep their frozen admission lists.  Seats and overlap
+        # blocks released here propagate to other affected talks.
+        audience_effects = audience.decisions_withdrawn_hook(conn, withdrawn, now)
+
         return {
             "conflict_id": conflict_id,
             "author_id": author_id,
@@ -539,6 +546,7 @@ def register_conflict(
             "withdrawn_decision_ids": withdrawn,
             **schedule_effects,
             **reimbursement_effects,
+            **audience_effects,
             "created_at": now,
         }
 
