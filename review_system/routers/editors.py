@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from .. import config, scheduling, services
+from .. import config, reimbursement, scheduling, services
 from ..schemas import (
+    AllowanceCreate,
+    BatchCreate,
+    BatchResultsInput,
+    ClaimCreate,
     ConflictCreate,
     DecisionPublish,
     InvitationCreate,
+    ReceiptCreate,
     ScheduleGroupCreate,
 )
 from ..security import require_role
@@ -196,3 +201,100 @@ def get_schedule_group_short_alias(group_id: int, _=Depends(require_role("editor
 @router.get("/arrangements/groups/{group_id}", include_in_schema=False)
 def get_arrangement_group_alias(group_id: int, _=Depends(require_role("editor"))):
     return scheduling.editor_get_group(config.DB_PATH, group_id)
+
+
+# ---------------------------------------------------------------------------
+# Speaker travel reimbursement (integer cents)
+# ---------------------------------------------------------------------------
+
+@router.post("/reimbursements/allowances", status_code=201)
+def create_reimbursement_allowance(
+    body: AllowanceCreate, _=Depends(require_role("editor"))
+):
+    return reimbursement.create_allowance(
+        config.DB_PATH, body.manuscript_id, body.amount_cents, body.decision_id
+    )
+
+
+@router.get("/reimbursements/allowances")
+def list_reimbursement_allowances(_=Depends(require_role("editor"))):
+    return reimbursement.list_allowances(config.DB_PATH)
+
+
+@router.get("/reimbursements/allowances/{allowance_id}")
+def get_reimbursement_allowance(allowance_id: int, _=Depends(require_role("editor"))):
+    return reimbursement.get_allowance(config.DB_PATH, allowance_id)
+
+
+@router.post("/reimbursements/receipts", status_code=201)
+def create_reimbursement_receipt(
+    body: ReceiptCreate, _=Depends(require_role("editor"))
+):
+    return reimbursement.create_receipt(
+        config.DB_PATH, body.voucher_no, body.author_id, body.amount_cents
+    )
+
+
+@router.get("/reimbursements/receipts")
+def list_reimbursement_receipts(_=Depends(require_role("editor"))):
+    return reimbursement.list_receipts(config.DB_PATH)
+
+
+@router.get("/reimbursements/receipts/{receipt_id}")
+def get_reimbursement_receipt(receipt_id: int, _=Depends(require_role("editor"))):
+    return reimbursement.get_receipt(config.DB_PATH, receipt_id)
+
+
+@router.post("/reimbursements/claims", status_code=201)
+def create_reimbursement_claim(body: ClaimCreate, _=Depends(require_role("editor"))):
+    """Approve an expense against (allowance, same-author receipt, amount)."""
+    return reimbursement.create_claim(
+        config.DB_PATH, body.allowance_id, body.receipt_id, body.amount_cents
+    )
+
+
+@router.get("/reimbursements/claims")
+def list_reimbursement_claims(_=Depends(require_role("editor"))):
+    return reimbursement.list_claims(config.DB_PATH)
+
+
+@router.get("/reimbursements/claims/{claim_id}")
+def get_reimbursement_claim(claim_id: int, _=Depends(require_role("editor"))):
+    return reimbursement.get_claim(config.DB_PATH, claim_id)
+
+
+@router.post("/reimbursements/batches", status_code=201)
+def create_reimbursement_batch(body: BatchCreate, _=Depends(require_role("editor"))):
+    """Hand approved amounts to finance.  Idempotent on (request no, content).
+
+    The request number is the body's ``idempotency_key``; a replay with the
+    same number and content returns the original delivery list and per-payment
+    numbers without calling any payment service.
+    """
+    items = [item.model_dump() for item in body.items]
+    return reimbursement.create_batch(config.DB_PATH, body.idempotency_key, items)
+
+
+@router.get("/reimbursements/batches")
+def list_reimbursement_batches(_=Depends(require_role("editor"))):
+    return reimbursement.list_batches(config.DB_PATH)
+
+
+@router.get("/reimbursements/batches/{batch_id}")
+def get_reimbursement_batch(batch_id: int, _=Depends(require_role("editor"))):
+    return reimbursement.get_batch(config.DB_PATH, batch_id)
+
+
+@router.post("/reimbursements/batches/{batch_id}/results")
+def record_reimbursement_results(
+    batch_id: int, body: BatchResultsInput, _=Depends(require_role("editor"))
+):
+    """Record finance's (partial) result for one payment number at a time."""
+    results = [item.model_dump() for item in body.results]
+    return reimbursement.record_results(config.DB_PATH, batch_id, results)
+
+
+@router.get("/reimbursements/summary")
+def reimbursement_summary(_=Depends(require_role("editor"))):
+    """Conference budget plus every allowance's and receipt's encumbrance/spend."""
+    return reimbursement.editor_summary(config.DB_PATH)

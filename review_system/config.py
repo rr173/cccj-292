@@ -13,6 +13,12 @@ from typing import Any
 # Default location for the runnable server; tests override via create_app(db_path=...).
 DB_PATH: str = os.environ.get("REVIEW_DB_PATH", os.path.join("data", "review.db"))
 
+# Fixed conference-wide speaker travel reimbursement budget, in cents.  This is
+# deployment configuration (like the room list), never edited through the API.
+REIMBURSEMENT_BUDGET_CENTS: int = int(
+    os.environ.get("REVIEW_REIMBURSEMENT_BUDGET_CENTS", "1000000")
+)
+
 # Conference rooms are *local configuration*, never managed through the API.
 # Point REVIEW_ROOMS_CONFIG at another JSON file to change the venue list.
 _DEFAULT_ROOMS_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rooms.json")

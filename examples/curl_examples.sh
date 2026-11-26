@@ -112,3 +112,57 @@ curl -sS "$BASE/editor/schedule/groups/1" -H "$EDITOR"
 # A conflict that withdraws a scheduling decision voids its session and
 # cancels any pending group involving it; see the conflict response fields
 # voided_session_ids / cancelled_schedule_group_ids.
+
+# ===========================================================================
+# Speaker travel reimbursement (all amounts are integer cents)
+# ===========================================================================
+
+# --- Editor: grant one allowance to a manuscript with a confirmed talk.
+#     The beneficiary is the manuscript's author; a confirmed reschedule that
+#     keeps the same decision does not affect it. One per (manuscript, decision). ---
+curl -sS -X POST "$BASE/editor/reimbursements/allowances" \
+  -H "$EDITOR" -H 'Content-Type: application/json' \
+  -d '{"manuscript_id": 1, "amount_cents": 120000}'
+
+# --- Editor: register receipts (unique voucher number, owning author, face value) ---
+curl -sS -X POST "$BASE/editor/reimbursements/receipts" \
+  -H "$EDITOR" -H 'Content-Type: application/json' \
+  -d '{"voucher_no": "VOC-2026-001", "author_id": 2, "amount_cents": 80000}'
+
+# --- Editor: approve an expense against (allowance, same-author receipt, cents).
+#     Rejected if it would exceed the allowance, the receipt face value, or the
+#     fixed conference budget. One receipt may be split across several claims. ---
+curl -sS -X POST "$BASE/editor/reimbursements/claims" \
+  -H "$EDITOR" -H 'Content-Type: application/json' \
+  -d '{"allowance_id": 1, "receipt_id": 1, "amount_cents": 60000}'
+
+# --- Editor: place approved (not-yet-delivered) cents into a payment batch.
+#     All-or-nothing; a claim may be delivered in several partial batches.
+#     Retrying the same idempotency_key AND content returns the original list
+#     and payment numbers; a different content with that key is a 409. ---
+curl -sS -X POST "$BASE/editor/reimbursements/batches" \
+  -H "$EDITOR" -H 'Content-Type: application/json' \
+  -d '{"idempotency_key": "batch-2026-0001",
+       "items": [{"claim_id": 1, "amount_cents": 60000}]}'
+
+# --- Editor: record finance results, one payment number at a time (repeatable
+#     across rounds). paid_cents <= instructed; the unpaid difference is
+#     released and NOT re-queued. Same result is a no-op; a different amount
+#     for an already-final payment is 409. Unreported payments stay encumbered. ---
+curl -sS -X POST "$BASE/editor/reimbursements/batches/1/results" \
+  -H "$EDITOR" -H 'Content-Type: application/json' \
+  -d '{"results": [{"payment_no": "PMT-000001-0001", "paid_cents": 55000}]}'
+
+# --- Editor: batch progress, then conference/allowance/receipt exposure ---
+curl -sS "$BASE/editor/reimbursements/batches" -H "$EDITOR"
+curl -sS "$BASE/editor/reimbursements/batches/1" -H "$EDITOR"
+curl -sS "$BASE/editor/reimbursements/summary" -H "$EDITOR"
+
+# --- Withdrawal of the backing decision (via a conflict) stops new approvals
+#     and releases only the undelivered cents; delivered instructions can still
+#     be settled, unknown amounts stay encumbered, paid cents remain spend. ---
+curl -sS "$BASE/editor/reimbursements/allowances/1" -H "$EDITOR"
+
+# --- Author: only their own reimbursement progress ---
+curl -sS "$BASE/author/reimbursements" -H "$AUTHOR1"
+curl -sS "$BASE/author/reimbursements/allowances/1" -H "$AUTHOR1"

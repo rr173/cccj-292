@@ -6,7 +6,7 @@ import sqlite3
 
 from fastapi import APIRouter, Depends
 
-from .. import config, scheduling, services
+from .. import config, reimbursement, scheduling, services
 from ..schemas import ManuscriptCreate, RevisionCreate, ScheduleResponseInput
 from ..security import require_role
 
@@ -237,3 +237,19 @@ def post_schedule_item_bare_alias(
     user: sqlite3.Row = Depends(require_role("author")),
 ):
     return _respond(item_id, body, user)
+
+
+# ---------------------------------------------------------------------------
+# Speaker travel reimbursement — the author sees only their own progress.
+# ---------------------------------------------------------------------------
+
+@router.get("/reimbursements")
+def my_reimbursements(user: sqlite3.Row = Depends(require_role("author"))):
+    return reimbursement.author_reimbursements(config.DB_PATH, user)
+
+
+@router.get("/reimbursements/allowances/{allowance_id}")
+def my_reimbursement_allowance(
+    allowance_id: int, user: sqlite3.Row = Depends(require_role("author"))
+):
+    return reimbursement.author_allowance(config.DB_PATH, user, allowance_id)

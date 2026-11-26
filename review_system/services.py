@@ -11,6 +11,7 @@ from __future__ import annotations
 import sqlite3
 
 from . import db as database
+from . import reimbursement
 from . import scheduling
 from .db import require_row, utcnow
 from .errors import ApiError
@@ -523,6 +524,13 @@ def register_conflict(
         # every pending confirmation group that involves such a manuscript.
         schedule_effects = scheduling.decisions_withdrawn_hook(conn, withdrawn, now)
 
+        # Reimbursement: freeze new approvals for the withdrawn decision's
+        # allowance and release only the not-yet-delivered approved cents.
+        # Delivered instructions stay settleable by finance.
+        reimbursement_effects = reimbursement.decisions_withdrawn_hook(
+            conn, withdrawn, now
+        )
+
         return {
             "conflict_id": conflict_id,
             "author_id": author_id,
@@ -530,6 +538,7 @@ def register_conflict(
             "blocked_invitations": blocked,
             "withdrawn_decision_ids": withdrawn,
             **schedule_effects,
+            **reimbursement_effects,
             "created_at": now,
         }
 

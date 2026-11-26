@@ -184,6 +184,79 @@ CREATE INDEX IF NOT EXISTS ix_sessions_decision
     ON sessions (decision_id);
 CREATE INDEX IF NOT EXISTS ix_sessions_time
     ON sessions (starts_at, ends_at);
+
+-- -------------------------------------------------------------------------
+-- Speaker travel reimbursement (all money is integer cents)
+--
+-- One allowance per (manuscript, decision).  A claim is the editor's approval
+-- of a receipt against one allowance; approved cents become "to be handed to
+-- finance" and are placed into payment batches.  Each payment instruction
+-- eventually receives exactly one finance result; unpaid remainder is
+-- released and never silently re-queued.
+-- -------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS reimbursement_allowances (
+    id            INTEGER PRIMARY KEY,
+    manuscript_id INTEGER NOT NULL REFERENCES manuscripts(id),
+    decision_id   INTEGER NOT NULL REFERENCES decisions(id),
+    beneficiary_id INTEGER NOT NULL REFERENCES users(id),  -- the manuscript's author
+    amount_cents  INTEGER NOT NULL CHECK (amount_cents > 0),
+    created_at    TEXT NOT NULL,
+    released_at   TEXT,          -- set when the backing decision is withdrawn
+    release_reason TEXT,
+    UNIQUE (manuscript_id, decision_id)
+);
+
+CREATE TABLE IF NOT EXISTS reimbursement_receipts (
+    id            INTEGER PRIMARY KEY,
+    voucher_no    TEXT NOT NULL UNIQUE,      -- external, editor-supplied
+    author_id     INTEGER NOT NULL REFERENCES users(id),
+    amount_cents  INTEGER NOT NULL CHECK (amount_cents > 0),
+    created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS reimbursement_claims (
+    id            INTEGER PRIMARY KEY,
+    allowance_id  INTEGER NOT NULL REFERENCES reimbursement_allowances(id),
+    receipt_id    INTEGER NOT NULL REFERENCES reimbursement_receipts(id),
+    amount_cents  INTEGER NOT NULL CHECK (amount_cents > 0),
+    created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_claims_allowance ON reimbursement_claims (allowance_id);
+CREATE INDEX IF NOT EXISTS ix_claims_receipt ON reimbursement_claims (receipt_id);
+
+CREATE TABLE IF NOT EXISTS payment_batches (
+    id                INTEGER PRIMARY KEY,
+    idempotency_key   TEXT NOT NULL UNIQUE, -- editor-supplied request number
+    request_hash      TEXT NOT NULL,        -- canonical content fingerprint
+    created_at        TEXT NOT NULL
+);
+
+-- One row per approved claim placed into a batch.  The cents are reserved for
+-- this delivery instruction until finance reports on it.
+CREATE TABLE IF NOT EXISTS payment_instructions (
+    id              INTEGER PRIMARY KEY,
+    batch_id        INTEGER NOT NULL REFERENCES payment_batches(id),
+    claim_id        INTEGER NOT NULL REFERENCES reimbursement_claims(id),
+    allowance_id    INTEGER NOT NULL REFERENCES reimbursement_allowances(id),
+    amount_cents    INTEGER NOT NULL CHECK (amount_cents > 0),
+    payee_id        INTEGER NOT NULL REFERENCES users(id),
+    voucher_no      TEXT NOT NULL,
+    payment_no      TEXT NOT NULL UNIQUE,   -- per-instruction payment number
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_instructions_batch ON payment_instructions (batch_id);
+CREATE INDEX IF NOT EXISTS ix_instructions_claim ON payment_instructions (claim_id);
+
+-- Exactly one final finance result per payment instruction.
+CREATE TABLE IF NOT EXISTS payment_results (
+    id                  INTEGER PRIMARY KEY,
+    instruction_id      INTEGER NOT NULL UNIQUE REFERENCES payment_instructions(id),
+    paid_cents          INTEGER NOT NULL CHECK (paid_cents >= 0),
+    released_cents      INTEGER NOT NULL CHECK (released_cents >= 0),
+    note                TEXT,
+    created_at          TEXT NOT NULL
+);
 """
 
 # Locally prepared accounts. Keys are static so the role examples are
@@ -196,6 +269,17 @@ SEED_USERS = [
     ("reviewer2", "Reviewer Liu", "reviewer", "key-reviewer-2"),
     ("reviewer3", "Reviewer Sun", "reviewer", "key-reviewer-3"),
 ]
+
+
+def _migrate_legacy_schema(conn: sqlite3.Connection) -> None:
+    """Additive migrations for databases created by an earlier revision.
+
+    ``CREATE TABLE IF NOT EXISTS`` handles new tables; this hook exists so a
+    future additive column does not require rebuilding a live database.
+    """
+    # No column additions yet.
+    return
+
 
 
 def utcnow() -> str:
@@ -217,6 +301,7 @@ def init_db(db_path: str) -> None:
     conn = connect(db_path)
     try:
         conn.executescript(SCHEMA)
+        _migrate_legacy_schema(conn)
         conn.executemany(
             "INSERT OR IGNORE INTO users (username, display_name, role, api_key)"
             " VALUES (?, ?, ?, ?)",

@@ -173,3 +173,72 @@ class ScheduleResponseInput(BaseModel):
         if self.accept is None:
             raise ValueError("an explicit boolean accept/confirm choice is required")
         return self
+
+
+# ---------------------------------------------------------------------------
+# Speaker travel reimbursement — every monetary field is integer cents.
+# ---------------------------------------------------------------------------
+
+class AllowanceCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    manuscript_id: int
+    amount_cents: StrictInt = Field(gt=0)
+    # Optional; when present it must equal the confirmed talk's decision.
+    decision_id: int | None = None
+
+
+class ReceiptCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    voucher_no: str = Field(min_length=1, max_length=120)
+    author_id: int
+    amount_cents: StrictInt = Field(gt=0)
+
+
+class ClaimCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    allowance_id: int
+    receipt_id: int
+    amount_cents: StrictInt = Field(gt=0)
+
+
+class BatchItemInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    claim_id: int
+    amount_cents: StrictInt = Field(gt=0)
+
+
+_BATCH_KEY_KEYS = (
+    "idempotency_key",
+    "request_id",
+    "batch_no",
+    "batch_key",
+    "request_no",
+)
+
+
+class BatchCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    idempotency_key: str = Field(
+        min_length=1, max_length=120, validation_alias=AliasChoices(*_BATCH_KEY_KEYS)
+    )
+    items: list[BatchItemInput] = Field(min_length=1)
+
+
+class PaymentResultInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    payment_no: str = Field(min_length=1, max_length=120)
+    paid_cents: StrictInt = Field(ge=0)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class BatchResultsInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    results: list[PaymentResultInput] = Field(min_length=1)
+

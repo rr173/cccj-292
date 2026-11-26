@@ -18,6 +18,12 @@
 REVIEW_DB_PATH=/tmp/review.db ./run.sh
 ```
 
+会议差旅报销总额（整数分）同样通过环境变量固定，默认 1,000,000 分：
+
+```bash
+REVIEW_REIMBURSEMENT_BUDGET_CENTS=500000 ./run.sh
+```
+
 ### 预置账号（本地准备好，不提供注册/管理接口）
 
 | 角色     | 用户名      | API Key          |
@@ -47,6 +53,16 @@ PYTHONPATH=/workspace/.pylibs/lib/python3.11/site-packages:/workspace \
 - 拒绝、截止过期、重复/迟到答复不可复活、冲突撤回联动作废与整组取消；
 - “最后一次同意 vs 撤回”并发竞争不变量（`tests/test_schedule_race.py`）。
 
+报告人差旅报销（`tests/test_reimbursement.py`，全部金额为整数分）：
+
+- 额度需已确认场次、受益人即稿件作者、同稿同决议仅一笔；确认改期沿用原决议不影响；
+- 凭证号唯一与票据归属、同一票据可拆给该作者的多笔额度；
+- 额度/票据/会议总额三处独立上限，分别约束“未交财务 + 已交未明 + 已付”之和；
+- 分批交付与整批原子占定、请求号 + 内容幂等重放、同号异内容拒绝；
+- 分次回执、零额/部分付款、差额释放不回流、相同回执幂等、异额不可覆盖；
+- 撤回决议仅释放未交部分，已交付仍可核销、未明额继续占款、已付仍计支出；
+- 审批 / 交付 / 撤回 / 核销并发下不超限、不留错分类（`test_concurrent_*`）。
+
 ## 3. 角色调用样例
 
 - `examples/walkthrough.py`：httpx 编写的完整端到端脚本（投稿 → 邀请 → 评审 →
@@ -62,7 +78,14 @@ PYTHONPATH=/workspace/.pylibs/lib/python3.11/site-packages:/workspace \
   PYTHONPATH=/workspace/.pylibs/lib/python3.11/site-packages \
     python3 examples/schedule_walkthrough.py http://127.0.0.1:8010
   ```
-- `examples/curl_examples.sh`：可复制的 curl 命令集（含排期段落）。
+- `examples/curl_examples.sh`：可复制的 curl 命令集（含排期与报销段落）。
+- `examples/reimbursement_walkthrough.py`：报销端到端脚本（额度 → 票据 → 审批 →
+  交付批次与幂等重放 → 分次财务回执 → 撤回决议后释放/核销 → 作者自查）。
+  ```bash
+  REVIEW_DB_PATH=/tmp/reimb-demo.db ./run.sh --port 8011
+  PYTHONPATH=/workspace/.pylibs/lib/python3.11/site-packages \
+    python3 examples/reimbursement_walkthrough.py http://127.0.0.1:8011
+  ```
 
 ## 4. HTTP 接口一览
 
@@ -79,6 +102,8 @@ PYTHONPATH=/workspace/.pylibs/lib/python3.11/site-packages:/workspace \
 | GET  | `/author/decisions/{id}` | 固定发布版本；撤回后返回 **410**，正文不可再取 |
 | GET  | `/author/schedule`、`/author/schedule/grouped` | 自己的报告场次与待确认/历史安排（含截止时间、本人答复、可否答复、结束原因） |
 | POST | `/author/schedule/items/{item_id}/respond` | 对自己稿件的那一条安排答复 `{"accept": true/false}`；他人条目返回 404 |
+| GET  | `/author/reimbursements` | 自己的报销总额、各笔额度/审批/付款进度（他人数据不可见） |
+| GET  | `/author/reimbursements/allowances/{id}` | 自己某笔额度的审批明细；他人额度 404 |
 
 （另提供兼容别名：`/author/schedules`、`/author/arrangements`、`/author/talks`，
 以及 `/author/schedule-items/{id}/respond|confirm`、`/author/arrangements/{id}/respond|confirm`。）
@@ -107,6 +132,16 @@ PYTHONPATH=/workspace/.pylibs/lib/python3.11/site-packages:/workspace \
 | GET  | `/editor/schedule` | 已确认日程；`?history=true` 另含被替换/作废场次及结束原因 |
 | GET  | `/editor/schedule/occupancy` | 当前占用：已确认场次 + 待确认组预留的新时段 |
 | GET  | `/editor/schedule/groups`、`/editor/schedule/groups/{id}` | 每组进度（总数/已同意/已拒绝/待答复）、状态与结束原因 |
+| POST | `/editor/reimbursements/allowances` | 给已确认报告、决议未撤回的稿件设一笔报销额度（受益人=稿件作者） |
+| GET  | `/editor/reimbursements/allowances[/{id}]` | 额度及其未交/已交未明/已付/释放金额 |
+| POST | `/editor/reimbursements/receipts` | 登记票据（唯一凭证号、归属作者、票面额） |
+| GET  | `/editor/reimbursements/receipts[/{id}]` | 票据及其三桶金额与已审批合计 |
+| POST | `/editor/reimbursements/claims` | 按「额度、同一作者票据、金额」审批费用 |
+| GET  | `/editor/reimbursements/claims[/{id}]` | 审批明细：未交、已交未明、已付、释放 |
+| POST | `/editor/reimbursements/batches` | 把多笔审批的未交款项全部/部分交付财务（幂等、整批原子） |
+| GET  | `/editor/reimbursements/batches[/{id}]` | 批次付款清单、逐笔付款编号与核销进度 |
+| POST | `/editor/reimbursements/batches/{id}/results` | 财务分次回执，逐付款编号记录实际支付额 |
+| GET  | `/editor/reimbursements/summary` | 会议总额及每笔额度/票据的占款与支出总览 |
 
 `POST /editor/schedule/groups` 的请求体：
 
@@ -130,6 +165,49 @@ PYTHONPATH=/workspace/.pylibs/lib/python3.11/site-packages:/workspace \
 组状态：`pending / confirmed / declined / expired / cancelled`；结束原因：
 `all_accepted / author_declined / deadline_expired / decision_withdrawn`。
 场次状态：`confirmed / superseded / voided`。
+
+### 报告人差旅报销 `/editor/reimbursements`、`/author/reimbursements`
+
+**所有金额为整数分（cents）**，不传图片、不接银行，只交付付款所需信息。
+会议有一个固定报销总额 `REVIEW_REIMBURSEMENT_BUDGET_CENTS`（默认 1,000,000 分，
+与会场配置一样属于部署配置，无管理接口）。
+
+请求体示例：
+
+```json
+POST /editor/reimbursements/allowances {"manuscript_id": 1, "amount_cents": 120000}
+POST /editor/reimbursements/receipts   {"voucher_no": "VOC-001", "author_id": 2, "amount_cents": 80000}
+POST /editor/reimbursements/claims     {"allowance_id": 1, "receipt_id": 1, "amount_cents": 60000}
+POST /editor/reimbursements/batches    {"idempotency_key": "batch-0001",
+                                        "items": [{"claim_id": 1, "amount_cents": 60000}]}
+POST /editor/reimbursements/batches/1/results
+     {"results": [{"payment_no": "PMT-000001-0001", "paid_cents": 55000, "note": "fee"}]}
+```
+
+关键语义：
+
+- **额度**：仅对“已有已确认场次 + 该场次决议未撤回”的稿件可设，受益人为稿件作者；
+  `UNIQUE(manuscript_id, decision_id)`。已确认改期只换时间、沿用原决议，额度不变；
+  改传其他决议 → `409 decision_mismatch`。
+- **审批三桶上限**：就会议、每笔额度、每张票据分别计算
+  “未交财务额 + 已交财务未明额 + 实际已付额”，各自不得超过本身上限；
+  违反分别返回 `budget_exceeded / allowance_exceeded / receipt_exceeded`。
+- **票据**：凭证号全局唯一；审批时票据归属作者必须等于额度受益人
+  （`receipt_owner_mismatch`）；同一票据可拆给该作者的多笔额度。
+- **批次原子性**：请求内同一审批不得重复；任一明细超过该审批未交余额即
+  `409 claim_amount_exceeded`，整批不落库。一份审批可跨多个批次分批交付。
+- **幂等**：`idempotency_key` + 规范化内容指纹。同号同内容重放 → 返回原付款清单与
+  逐笔付款编号（即使决议已撤回或财务已回执）；同号异内容 → `409 idempotency_conflict`。
+- **财务回执**：每次可只报部分付款编号；`paid_cents` 必须 ≤ 指令金额
+  （`paid_exceeds_instruction`）。每笔付款编号只会有一个最终结果：重复相同金额
+  视为 `unchanged` 无副作用；不同金额 → `409 result_conflict`。未回执的付款项继续
+  全额占款；已回执的差额 `released_cents` 释放且**不会**自动回到未交款项。
+- **撤回决议**：`POST /editor/conflicts` 的响应额外带
+  `released_allowance_ids`、`released_cents`。额度置 `released`：不再接受新审批，
+  未交部分释放；已交付指令仍可核销，未明额不提前释放，已付金额仍计实际支出；
+  新决议不会恢复旧额度（必须重新建额度）。
+- **可见性**：编辑可查 `summary`（会议总额 + 每笔额度/票据占款支出）与批次进度；
+  作者仅能查自己的 `GET /author/reimbursements`，按 id 查他人额度返回 404。
 
 ## 5. 关键规则与实现位置
 
@@ -165,6 +243,23 @@ PYTHONPATH=/workspace/.pylibs/lib/python3.11/site-packages:/workspace \
 | 同意与撤回竞争无残留 | 同一把写锁串行：同意先生效则撤回随后 void 新场次；撤回先生效则组 cancelled、答复 409；`tests/test_schedule_race.py` 多轮验证 |
 | 新决议不复活旧场次/旧同意 | 撤回只写终态，重新发布产生新 `decisions` 行，与旧 `sessions/items` 无任何联动；必须由编辑重新发起安排 |
 
+### 差旅报销关键规则与实现位置
+
+| 需求 | 实现 |
+|---|---|
+| 额度绑定已确认场次且决议未撤回 | `reimbursement.create_allowance`：查 `sessions(status=confirmed)` 并以其 `decision_id` 为准 |
+| 同稿同决议仅一笔额度、改期不影响 | `UNIQUE(manuscript_id, decision_id)`；改期沿用原决议故不产生新行 |
+| 审批须同作者票据 | `create_claim` 比对 `receipt.author_id` 与 `allowance.beneficiary_id` |
+| 三处独立上限 | `_assert_caps` 用同一 `_exposure` 就 allowance/receipt/会议预算分别校验 |
+| 分批交付 + 整批原子占定 | `create_batch` 在一个 `BEGIN IMMEDIATE` 内校验全部明细后再插入指令 |
+| 请求号幂等、同号异内容拒绝 | `payment_batches.idempotency_key UNIQUE` + 规范化 `request_hash` 比对 |
+| 只交付款所需信息、不调付款服务 | `batch_payload` 仅含付款编号/收款人/凭证号/金额 |
+| 每笔付款编号唯一终态 | `payment_results.instruction_id UNIQUE` + 已存在同额幂等、异额 409 |
+| 未明额继续占款、差额释放不回流 | `_exposure` 把无 result 的指令全额计入；有 result 仅计 `paid_cents` |
+| 撤回仅释放未交部分 | `reimbursement.decisions_withdrawn_hook` 在冲突事务内计算未交付余额并置 `released_at` |
+| 已付仍计支出、已交付可核销 | 撤回只改 `reimbursement_allowances`，从不改 `payment_instructions/results` |
+| 并发安全 | 复用全局写锁 + `BEGIN IMMEDIATE`；`test_concurrent_*` 验证不超限、无错分类 |
+
 ### 并发不变量（`tests/test_publish_conflict_race.py`）
 
 冲突登记与决议发布并发时，只允许两种结局：
@@ -190,6 +285,13 @@ schedule_groups(confirmation_deadline, status[pending/confirmed/declined/expired
 schedule_items(group_id, manuscript_id, decision_id, room, starts_at, ends_at, response[waiting/accepted/declined])
 sessions(manuscript_id, decision_id, group_id, room, starts_at, ends_at, status[confirmed/superseded/voided], end_reason)
 -- ux_confirmed_session: UNIQUE(manuscript_id) WHERE status='confirmed'
+reimbursement_allowances(manuscript_id, decision_id, beneficiary_id, amount_cents, released_at, release_reason)
+-- UNIQUE(manuscript_id, decision_id)
+reimbursement_receipts(voucher_no UNIQUE, author_id, amount_cents)
+reimbursement_claims(allowance_id, receipt_id, amount_cents)
+payment_batches(idempotency_key UNIQUE, request_hash)
+payment_instructions(batch_id, claim_id, allowance_id, amount_cents, payee_id, voucher_no, payment_no UNIQUE)
+payment_results(instruction_id UNIQUE, paid_cents, released_cents, note)
 ```
 
 会场不入库、不提供管理接口，只读本地配置 `review_system/rooms.json`
@@ -200,3 +302,5 @@ sessions(manuscript_id, decision_id, group_id, room, starts_at, ends_at, status[
 
 邮件通知、自动匹配算法、前端页面、用户自助注册与通用权限管理页面。
 评语正文里评审人自行写入的身份信息不做识别脱敏（仅编号层面匿名）。
+报销不接银行、不调用任何付款服务，也不接收/存储票据图片；只按凭证号登记票面额，
+并把付款所需信息（收款作者、凭证号、金额、付款编号）交给会务财务。
