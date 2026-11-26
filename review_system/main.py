@@ -9,6 +9,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from . import config, db as database
@@ -42,6 +44,25 @@ def create_app(db_path: str | None = None) -> FastAPI:
         return JSONResponse(
             status_code=exc.status_code,
             content={"error": {"code": exc.code, "detail": exc.detail}},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(request: Request, exc: RequestValidationError):
+        # Keep the same {"error": ...} envelope as domain errors while
+        # preserving the structured pydantic details.
+        first = exc.errors()[0] if exc.errors() else {}
+        location = ".".join(str(p) for p in first.get("loc", []) if p != "body")
+        message = first.get("msg", "invalid request")
+        detail = f"{location}: {message}" if location else message
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "invalid_request",
+                    "detail": detail,
+                    "errors": jsonable_encoder(exc.errors()),
+                }
+            },
         )
 
     app.include_router(authors.router)

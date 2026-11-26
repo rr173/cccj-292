@@ -6,8 +6,8 @@ import sqlite3
 
 from fastapi import APIRouter, Depends
 
-from .. import config, services
-from ..schemas import ManuscriptCreate, RevisionCreate
+from .. import config, scheduling, services
+from ..schemas import ManuscriptCreate, RevisionCreate, ScheduleResponseInput
 from ..security import require_role
 
 router = APIRouter(prefix="/author", tags=["author"])
@@ -52,3 +52,188 @@ def my_decision(
     decision_id: int, user: sqlite3.Row = Depends(require_role("author"))
 ):
     return services.get_author_decision(config.DB_PATH, user, decision_id)
+
+
+# ---------------------------------------------------------------------------
+# Conference schedule — authors only ever see their own manuscripts.
+# ---------------------------------------------------------------------------
+
+@router.get("/schedule")
+def my_schedule(
+    grouped: bool = False,
+    view: str | None = None,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    """Flat list of my confirmed talks and my (past/pending) confirmations.
+
+    ``?grouped=true`` (or ``?view=grouped``) returns confirmed/pending/history
+    sections instead of the flat list.
+    """
+    if grouped or view == "grouped":
+        return scheduling.author_schedule_grouped(config.DB_PATH, user)
+    return scheduling.author_schedule_flat(config.DB_PATH, user)
+
+
+@router.get("/schedule/grouped")
+def my_schedule_grouped(user: sqlite3.Row = Depends(require_role("author"))):
+    return scheduling.author_schedule_grouped(config.DB_PATH, user)
+
+
+@router.get("/schedules", include_in_schema=False)
+def my_schedule_alias_schedules(user: sqlite3.Row = Depends(require_role("author"))):
+    return scheduling.author_schedule_flat(config.DB_PATH, user)
+
+
+@router.get("/arrangements", include_in_schema=False)
+def my_arrangements_alias(user: sqlite3.Row = Depends(require_role("author"))):
+    return scheduling.author_schedule_flat(config.DB_PATH, user)
+
+
+@router.get("/talks", include_in_schema=False)
+def my_talks_alias(user: sqlite3.Row = Depends(require_role("author"))):
+    return scheduling.author_schedule_flat(config.DB_PATH, user)
+
+
+def _respond(item_id: int, body: ScheduleResponseInput, user: sqlite3.Row):
+    return scheduling.respond_to_item(config.DB_PATH, user, item_id, bool(body.accept))
+
+
+@router.post("/schedule/groups/{group_id}/respond")
+def respond_to_group(
+    group_id: int,
+    body: ScheduleResponseInput,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    item_id = scheduling.resolve_own_group_item(
+        config.DB_PATH, user, group_id, body.item_id
+    )
+    return _respond(item_id, body, user)
+
+
+@router.post("/schedule/groups/{group_id}/confirm", include_in_schema=False)
+def confirm_group_alias(
+    group_id: int,
+    body: ScheduleResponseInput,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    item_id = scheduling.resolve_own_group_item(
+        config.DB_PATH, user, group_id, body.item_id
+    )
+    return _respond(item_id, body, user)
+
+
+@router.post("/confirmations/{item_id}/respond", include_in_schema=False)
+def respond_confirmation_alias(
+    item_id: int,
+    body: ScheduleResponseInput,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    return _respond(item_id, body, user)
+
+
+@router.post("/confirmations/{item_id}", include_in_schema=False)
+def post_confirmation_bare_alias(
+    item_id: int,
+    body: ScheduleResponseInput,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    return _respond(item_id, body, user)
+
+
+@router.post("/schedule/items/{item_id}/respond")
+def respond_schedule_item(
+    item_id: int,
+    body: ScheduleResponseInput,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    return _respond(item_id, body, user)
+
+
+@router.post("/schedule/items/{item_id}/confirm", include_in_schema=False)
+def confirm_schedule_item(
+    item_id: int,
+    body: ScheduleResponseInput,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    return _respond(item_id, body, user)
+
+
+@router.post("/schedule/{item_id}/respond", include_in_schema=False)
+def respond_schedule_short_alias(
+    item_id: int,
+    body: ScheduleResponseInput,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    return _respond(item_id, body, user)
+
+
+@router.post("/schedule-items/{item_id}/respond", include_in_schema=False)
+def respond_schedule_items_hyphen_alias(
+    item_id: int,
+    body: ScheduleResponseInput,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    return _respond(item_id, body, user)
+
+
+@router.post("/schedule-items/{item_id}/confirm", include_in_schema=False)
+def confirm_schedule_items_hyphen_alias(
+    item_id: int,
+    body: ScheduleResponseInput,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    return _respond(item_id, body, user)
+
+
+@router.post("/arrangements/{item_id}/respond", include_in_schema=False)
+def respond_arrangement_alias(
+    item_id: int,
+    body: ScheduleResponseInput,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    return _respond(item_id, body, user)
+
+
+@router.post("/arrangements/{item_id}/confirm", include_in_schema=False)
+def confirm_arrangement_alias(
+    item_id: int,
+    body: ScheduleResponseInput,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    return _respond(item_id, body, user)
+
+
+@router.post("/schedules/{item_id}/respond", include_in_schema=False)
+def respond_schedules_alias(
+    item_id: int,
+    body: ScheduleResponseInput,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    return _respond(item_id, body, user)
+
+
+@router.post("/schedules/{item_id}/confirm", include_in_schema=False)
+def confirm_schedules_alias(
+    item_id: int,
+    body: ScheduleResponseInput,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    return _respond(item_id, body, user)
+
+
+@router.post("/schedule/{item_id}", include_in_schema=False)
+def post_schedule_bare_alias(
+    item_id: int,
+    body: ScheduleResponseInput,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    return _respond(item_id, body, user)
+
+
+@router.post("/schedule-items/{item_id}", include_in_schema=False)
+def post_schedule_item_bare_alias(
+    item_id: int,
+    body: ScheduleResponseInput,
+    user: sqlite3.Row = Depends(require_role("author")),
+):
+    return _respond(item_id, body, user)

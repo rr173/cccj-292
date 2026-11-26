@@ -11,6 +11,7 @@ from __future__ import annotations
 import sqlite3
 
 from . import db as database
+from . import scheduling
 from .db import require_row, utcnow
 from .errors import ApiError
 from .security import (
@@ -69,17 +70,22 @@ def create_manuscript(db_path: str, user: sqlite3.Row, title: str, content: str)
             (title, user["id"], now),
         )
         manuscript_id = cur.lastrowid
-        conn.execute(
+        rev_cur = conn.execute(
             "INSERT INTO revisions (manuscript_id, revision_no, content, created_at)"
             " VALUES (?, 1, ?, ?)",
             (manuscript_id, content, now),
         )
+        revision_id = rev_cur.lastrowid
         row = require_row(conn, "manuscripts", manuscript_id, "manuscript")
         return {
             "manuscript_id": manuscript_id,
             "title": row["title"],
             "created_at": row["created_at"],
-            "first_revision": {"revision_id": 1, "revision_no": 1, "content": content},
+            "first_revision": {
+                "revision_id": revision_id,
+                "revision_no": 1,
+                "content": content,
+            },
         }
 
 
@@ -513,12 +519,17 @@ def register_conflict(
             blocked += _block_open_invitations(conn, m["id"], reviewer_id, reason)
             withdrawn += _withdraw_decisions_for_reviewer(conn, m["id"], reviewer_id, reason)
 
+        # A withdrawn decision voids any talk session based on it and cancels
+        # every pending confirmation group that involves such a manuscript.
+        schedule_effects = scheduling.decisions_withdrawn_hook(conn, withdrawn, now)
+
         return {
             "conflict_id": conflict_id,
             "author_id": author_id,
             "reviewer_id": reviewer_id,
             "blocked_invitations": blocked,
             "withdrawn_decision_ids": withdrawn,
+            **schedule_effects,
             "created_at": now,
         }
 

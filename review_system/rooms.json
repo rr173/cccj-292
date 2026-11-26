@@ -1,0 +1,32 @@
+{
+  "rooms": [
+    {
+      "id": 1,
+      "code": "hall-a",
+      "name": "Grand Hall A",
+      "capacity": 600,
+      "aliases": ["A", "Hall A", "Hall-A", "hall1", "hall-1", "Hall 1", "主会场", "A厅", "第一会场"]
+    },
+    {
+      "id": 2,
+      "code": "hall-b",
+      "name": "Hall B",
+      "capacity": 260,
+      "aliases": ["B", "Hall B", "Hall-B", "hall2", "hall-2", "Hall 2", "B厅", "第二会场"]
+    },
+    {
+      "id": 3,
+      "code": "room-101",
+      "name": "Room 101",
+      "capacity": 80,
+      "aliases": ["101", "Room101", "Room 101"]
+    },
+    {
+      "id": 4,
+      "code": "room-202",
+      "name": "Room 202",
+      "capacity": 40,
+      "aliases": ["202", "Room202", "Room 202"]
+    }
+  ]
+}

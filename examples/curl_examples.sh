@@ -52,3 +52,63 @@ curl -sS "$BASE/author/decisions/1" -H "$AUTHOR1"
 
 # --- Editor: original frozen content + withdrawal reason remain visible ---
 curl -sS "$BASE/editor/decisions/1" -H "$EDITOR"
+
+# ===========================================================================
+# Conference scheduling / linked rescheduling
+# Times are UTC ISO-8601; rooms come from review_system/rooms.json.
+# ===========================================================================
+
+# --- Editor: list locally configured rooms ---
+curl -sS "$BASE/editor/rooms" -H "$EDITOR"
+
+# --- Editor: submit a group of arrangements (one manuscript may appear once).
+#     Every item names a live published decision, room and UTC start/end.
+#     The whole group shares one author-confirmation deadline, which must be
+#     strictly before every involved new (and current old) slot start. ---
+curl -sS -X POST "$BASE/editor/schedule/groups" \
+  -H "$EDITOR" -H 'Content-Type: application/json' \
+  -d '{
+        "confirmation_deadline": "2030-05-01T00:00:00Z",
+        "items": [
+          {"manuscript_id": 1, "decision_id": 1, "room": "hall-a",
+           "starts_at": "2030-06-03T10:00:00Z", "ends_at": "2030-06-03T11:00:00Z"}
+        ]
+      }'
+
+# --- Editor: linked swap of two existing talks. decision_id is omitted for
+#     manuscripts that already have a confirmed arrangement: their decision is
+#     reused and only room/time change. New slots may overlap this group’s own
+#     old slots (the cross-wise swap below); back-to-back is not a conflict. ---
+curl -sS -X POST "$BASE/editor/schedule/groups" \
+  -H "$EDITOR" -H 'Content-Type: application/json' \
+  -d '{
+        "confirmation_deadline": "2030-05-01T00:00:00Z",
+        "items": [
+          {"manuscript_id": 1, "room": "hall-a",
+           "starts_at": "2030-06-03T11:00:00Z", "ends_at": "2030-06-03T12:00:00Z"},
+          {"manuscript_id": 2, "room": "hall-a",
+           "starts_at": "2030-06-03T10:00:00Z", "ends_at": "2030-06-03T11:00:00Z"}
+        ]
+      }'
+
+# --- Author: list own confirmed talks + pending/past confirmations ---
+curl -sS "$BASE/author/schedule" -H "$AUTHOR1"
+curl -sS "$BASE/author/schedule/grouped" -H "$AUTHOR1"
+
+# --- Author: answer only their own item (404 for another author’s item) ---
+curl -sS -X POST "$BASE/author/schedule/items/1/respond" \
+  -H "$AUTHOR1" -H 'Content-Type: application/json' -d '{"accept": true}'
+curl -sS -X POST "$BASE/author/schedule/items/2/respond" \
+  -H "$AUTHOR2" -H 'Content-Type: application/json' -d '{"accept": false}'
+
+# --- Editor: confirmed schedule (?history=true adds superseded/voided slots),
+#     current occupancy (confirmed + reserved), and group progress/end reasons ---
+curl -sS "$BASE/editor/schedule" -H "$EDITOR"
+curl -sS "$BASE/editor/schedule?history=true" -H "$EDITOR"
+curl -sS "$BASE/editor/schedule/occupancy" -H "$EDITOR"
+curl -sS "$BASE/editor/schedule/groups" -H "$EDITOR"
+curl -sS "$BASE/editor/schedule/groups/1" -H "$EDITOR"
+
+# A conflict that withdraws a scheduling decision voids its session and
+# cancels any pending group involving it; see the conflict response fields
+# voided_session_ids / cancelled_schedule_group_ids.

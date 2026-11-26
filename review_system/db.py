@@ -116,6 +116,74 @@ CREATE TABLE IF NOT EXISTS decision_reviews (
     score           INTEGER NOT NULL,
     UNIQUE (decision_id, review_id)
 );
+
+-- -------------------------------------------------------------------------
+-- Conference talk scheduling
+--
+-- A schedule_groups row is one editor submission: either a first-time group
+-- of talk arrangements or a linked rescheduling that several authors confirm
+-- together.  schedule_items are the per-manuscript proposed slots and each
+-- author's separate response.  sessions are the effective, confirmed talks.
+-- -------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS schedule_groups (
+    id                       INTEGER PRIMARY KEY,
+    confirmation_deadline    TEXT NOT NULL,  -- UTC ISO-8601
+    status                   TEXT NOT NULL CHECK (status IN
+                                 ('pending', 'confirmed', 'declined',
+                                  'expired', 'cancelled')),
+    end_reason               TEXT,
+    created_at               TEXT NOT NULL,
+    ended_at                 TEXT
+);
+
+CREATE TABLE IF NOT EXISTS schedule_items (
+    id            INTEGER PRIMARY KEY,
+    group_id      INTEGER NOT NULL REFERENCES schedule_groups(id),
+    manuscript_id INTEGER NOT NULL REFERENCES manuscripts(id),
+    -- The specific live published decision this arrangement is based on.
+    decision_id   INTEGER NOT NULL REFERENCES decisions(id),
+    room          TEXT NOT NULL,             -- canonical config room code
+    starts_at     TEXT NOT NULL,             -- UTC ISO-8601
+    ends_at       TEXT NOT NULL,
+    response      TEXT NOT NULL DEFAULT 'waiting'
+                  CHECK (response IN ('waiting', 'accepted', 'declined')),
+    responded_at  TEXT,
+    UNIQUE (group_id, manuscript_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_schedule_items_group
+    ON schedule_items (group_id);
+CREATE INDEX IF NOT EXISTS ix_schedule_items_manuscript
+    ON schedule_items (manuscript_id);
+CREATE INDEX IF NOT EXISTS ix_schedule_items_decision
+    ON schedule_items (decision_id);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id                       INTEGER PRIMARY KEY,
+    manuscript_id            INTEGER NOT NULL REFERENCES manuscripts(id),
+    decision_id              INTEGER NOT NULL REFERENCES decisions(id),
+    group_id                 INTEGER REFERENCES schedule_groups(id),
+    room                     TEXT NOT NULL,
+    starts_at                TEXT NOT NULL,
+    ends_at                  TEXT NOT NULL,
+    status                   TEXT NOT NULL CHECK (status IN
+                                 ('confirmed', 'superseded', 'voided')),
+    created_at               TEXT NOT NULL,
+    confirmed_at             TEXT,
+    ended_at                 TEXT,
+    end_reason               TEXT,
+    replaced_by_group_id     INTEGER REFERENCES schedule_groups(id)
+);
+
+-- At most one confirmed (occupying) talk per manuscript.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_confirmed_session
+    ON sessions (manuscript_id) WHERE status = 'confirmed';
+
+CREATE INDEX IF NOT EXISTS ix_sessions_decision
+    ON sessions (decision_id);
+CREATE INDEX IF NOT EXISTS ix_sessions_time
+    ON sessions (starts_at, ends_at);
 """
 
 # Locally prepared accounts. Keys are static so the role examples are
